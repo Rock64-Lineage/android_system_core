@@ -475,14 +475,21 @@ static void export_kernel_boot_props() {
         { "ro.boot.hardware",   "ro.hardware",   "unknown", },
         { "ro.boot.revision",   "ro.revision",   "0", },
     };
-
+	proc_read( "/proc/cmdline", cmdline, sizeof(cmdline) );
+        s1 = strstr(cmdline, STORAGE_MEDIA);
+	ERROR("SDMMC OR EMMC ?s1=%s\n",s1);
     //if storagemedia is emmc, so we will wait emmc init finish
+if(s1 > 0) {
     for (int i = 0; i < EMMC_RETRY_COUNT; i++) {
         proc_read( "/proc/cmdline", cmdline, sizeof(cmdline) );
         s1 = strstr(cmdline, STORAGE_MEDIA);
         s2 = strstr(cmdline, "androidboot.mode=emmc");
 	s3 = strstr(cmdline, "storagemedia=nvme");
 	s4 = strstr(cmdline, "androidboot.mode=nvme");
+	ERROR("s1=%s\n",s1);
+	ERROR("s2=%s\n",s2);
+	ERROR("s3=%s\n",s3);
+	ERROR("s4=%s\n",s4);
 
         if ((s1 == NULL) && (s3 == NULL)) {
             //storagemedia is unknow
@@ -502,6 +509,21 @@ static void export_kernel_boot_props() {
             usleep(10000);
         }
     }
+} else {
+    for (int i = 0; i < EMMC_RETRY_COUNT_SD; i++) {
+		proc_read( "/proc/cmdline", cmdline, sizeof(cmdline) );
+		s1 = strstr(cmdline, STORAGE_MEDIA_SD);
+		s2 = strstr(cmdline, "androidboot.mode=sd");
+
+		if ((s1 > 0) && (s2 > 0)) {
+			ERROR("OK,SDMMC DRIVERS INIT OK\n");
+			property_set("ro.boot.mode", "sd");
+			break;
+		} else {
+			ERROR("ERROR,SDMMC DRIVERS NOT READY, RERRY=%d\n", i);
+		}
+	}
+}
 
     for (size_t i = 0; i < ARRAY_SIZE(prop_map); i++) {
         std::string value = property_get(prop_map[i].src_prop);
