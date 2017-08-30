@@ -462,6 +462,7 @@ static void export_kernel_boot_props() {
     char* s2;
     char* s3;
     char* s4;
+    char* s5;
 
     struct {
         const char *src_prop;
@@ -486,13 +487,16 @@ if(s1 > 0) {
         s2 = strstr(cmdline, "androidboot.mode=emmc");
 	s3 = strstr(cmdline, "storagemedia=nvme");
 	s4 = strstr(cmdline, "androidboot.mode=nvme");
+	s5 = strstr(cmdline, "sdfwupdate"); //check sdcard fw update
 	ERROR("s1=%s\n",s1);
 	ERROR("s2=%s\n",s2);
 	ERROR("s3=%s\n",s3);
 	ERROR("s4=%s\n",s4);
+	ERROR("s5=%s\n",s5);
 
-        if ((s1 == NULL) && (s3 == NULL)) {
+        if ((s1 == NULL) && (s3 == NULL) && (s5 == NULL)) {
             //storagemedia is unknow
+            ERROR("storagemedia is unknow\n");
             break;
         }
 
@@ -503,6 +507,10 @@ if(s1 > 0) {
         } else if ((s3 > 0) && (s4 > 0)) {
 	    ERROR("OK,NVME DRIVERS INIT OK\n");
 	    property_set("ro.boot.mode", "nvme");
+	    break;
+	} else if(s5 >0) {
+	    ERROR("OK,IS sdcard fw upgrade\n");
+	    property_set("ro.boot.mode", "emmc");
 	    break;
 	} else {
             ERROR("OK,EMMC DRIVERS NOT READY, RERRY=%d\n", i);
