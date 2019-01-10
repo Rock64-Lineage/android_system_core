@@ -73,7 +73,11 @@ char *locale;
 
 #define BATTERY_UNKNOWN_TIME    (2 * MSEC_PER_SEC)
 #define POWER_ON_KEY_TIME       (2 * MSEC_PER_SEC)
-#define UNPLUGGED_SHUTDOWN_TIME (5 * MSEC_PER_SEC)
+//<<<<<<< HEAD
+//#define UNPLUGGED_SHUTDOWN_TIME (5 * MSEC_PER_SEC)
+//=======
+#define UNPLUGGED_SHUTDOWN_TIME (3 * MSEC_PER_SEC)
+//>>>>>>> rock/thzy_develop
 
 #define LAST_KMSG_MAX_SZ        (32 * 1024)
 #ifndef RED_LED_PATH
@@ -597,10 +601,10 @@ static void update_screen_state(struct charger *charger, int64_t now)
         gr_font_size(gr_sys_font(), &char_width, &char_height);
         init_status_display(batt_anim);
 
-#ifndef CHARGER_DISABLE_INIT_BLANK
+//<<<<<<< HEAD
+//#ifndef CHARGER_DISABLE_INIT_BLANK
         healthd_board_mode_charger_set_backlight(false);
-        gr_fb_blank(true);
-#endif
+        //gr_fb_blank(true);
         minui_inited = true;
     }
 

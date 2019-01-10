@@ -25,6 +25,14 @@ class Service;
 #define COMMAND_RETRY_TIMEOUT 5
 
 extern const char *ENV[32];
+/* IMPORTANT: THE VALUE OF STORAGE_MEDIA MUST BE CONSISTANT WITH UBOOT */
+#define EMMC_RETRY_COUNT 200
+#define STORAGE_MEDIA "storagemedia=emmc"
+
+/* IMPORTANT: THE VALUE OF STORAGE_MEDIA MUST BE CONSISTANT WITH UBOOT */
+#define EMMC_RETRY_COUNT_SD 20
+#define STORAGE_MEDIA_SD "storagemedia=sd"
+
 extern bool waiting_for_exec;
 extern int have_console;
 extern std::string console_name;

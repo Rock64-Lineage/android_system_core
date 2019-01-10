@@ -74,6 +74,9 @@ void property_init() {
 
 static int check_mac_perms(const char *name, char *sctx, struct ucred *cr)
 {
+    if (is_selinux_enabled() <= 0)
+        return 1;
+
     char *tctx = NULL;
     int result = 0;
     property_audit_data audit_data;

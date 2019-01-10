@@ -73,11 +73,16 @@ struct selabel_handle *sehandle_prop;
 
 static int property_triggers_enabled = 0;
 
+//<<<<<<< HEAD
 #ifndef BOARD_CHARGING_CMDLINE_NAME
 #define BOARD_CHARGING_CMDLINE_NAME "androidboot.battchg_pause"
 #define BOARD_CHARGING_CMDLINE_VALUE "true"
 #endif
 
+//=======
+static char bootmode[32] = "unknow";
+static char hardware[32] = "rk30board";
+//>>>>>>> rock/thzy_develop
 static char qemu[32];
 static char battchg_pause[32];
 
@@ -90,6 +95,25 @@ const char *ENV[32];
 bool waiting_for_exec = false;
 
 static int epoll_fd = -1;
+
+static int
+unix_read(int  fd, void*  buff, int  len) {
+    int  ret;
+    do { ret = read(fd, buff, len); } while (ret < 0 && errno == EINTR);
+        return ret;
+}
+        
+static int
+proc_read(const char*  filename, char* buff, size_t  buffsize) {
+    int  len = 0;
+    int  fd  = open(filename, O_RDONLY);
+    if (fd >= 0) {
+        len = unix_read(fd, buff, buffsize-1);
+        close(fd);
+    }
+    buff[len > 0 ? len : 0] = 0;
+    return len;
+}
 
 void register_epoll_handler(int fd, void (*fn)()) {
     epoll_event ev;
@@ -264,6 +288,105 @@ ret:
     return result;
 }
 
+//<<<<<<< HEAD
+//=======
+static void security_failure() {
+    ERROR("Security failure; rebooting into recovery mode...\n");
+    android_reboot(ANDROID_RB_RESTART2, 0, "recovery");
+    while (true) { pause(); }  // never reached
+}
+
+#define MMAP_RND_PATH "/proc/sys/vm/mmap_rnd_bits"
+#define MMAP_RND_COMPAT_PATH "/proc/sys/vm/mmap_rnd_compat_bits"
+
+/* __attribute__((unused)) due to lack of mips support: see mips block
+ * in set_mmap_rnd_bits_action */
+static bool __attribute__((unused)) set_mmap_rnd_bits_min(int start, int min, bool compat) {
+    std::string path;
+    if (compat) {
+        path = MMAP_RND_COMPAT_PATH;
+    } else {
+        path = MMAP_RND_PATH;
+    }
+    std::ifstream inf(path, std::fstream::in);
+    if (!inf) {
+        return false;
+    }
+    while (start >= min) {
+        // try to write out new value
+        std::string str_val = std::to_string(start);
+        std::ofstream of(path, std::fstream::out);
+        if (!of) {
+            return false;
+        }
+        of << str_val << std::endl;
+        of.close();
+
+        // check to make sure it was recorded
+        inf.seekg(0);
+        std::string str_rec;
+        inf >> str_rec;
+        if (str_val.compare(str_rec) == 0) {
+            break;
+        }
+        start--;
+    }
+    inf.close();
+    return (start >= min);
+}
+
+/*
+ * Set /proc/sys/vm/mmap_rnd_bits and potentially
+ * /proc/sys/vm/mmap_rnd_compat_bits to the maximum supported values.
+ * Returns -1 if unable to set these to an acceptable value.  Apply
+ * upstream patch-sets https://lkml.org/lkml/2015/12/21/337 and
+ * https://lkml.org/lkml/2016/2/4/831 to enable this.
+ */
+static int set_mmap_rnd_bits_action(const std::vector<std::string>& args)
+{
+    int ret = -1;
+#if defined(TARGET_BOARD_PLATFORM_PRODUCT_BOX)
+	return 0;
+#endif
+    /* values are arch-dependent */
+#if defined(__aarch64__)
+    /* arm64 supports 18 - 33 bits depending on pagesize and VA_SIZE */
+    if (set_mmap_rnd_bits_min(33, 24, false)
+            && set_mmap_rnd_bits_min(16, 16, true)) {
+        ret = 0;
+    }
+#elif defined(__x86_64__)
+    /* x86_64 supports 28 - 32 bits */
+    if (set_mmap_rnd_bits_min(32, 32, false)
+            && set_mmap_rnd_bits_min(16, 16, true)) {
+        ret = 0;
+    }
+#elif defined(__arm__) || defined(__i386__)
+    /* check to see if we're running on 64-bit kernel */
+    bool h64 = !access(MMAP_RND_COMPAT_PATH, F_OK);
+    /* supported 32-bit architecture must have 16 bits set */
+    if (set_mmap_rnd_bits_min(16, 16, h64)) {
+        ret = 0;
+    }
+#elif defined(__mips__) || defined(__mips64__)
+    // TODO: add mips support b/27788820
+    ret = 0;
+#else
+    ERROR("Unknown architecture\n");
+#endif
+
+#ifdef __BRILLO__
+    // TODO: b/27794137
+    ret = 0;
+#endif
+    if (ret == -1) {
+        ERROR("Unable to set adequate mmap entropy value!\n");
+        security_failure();
+    }
+    return ret;
+}
+
+//>>>>>>> rock/thzy_develop
 static int keychord_init_action(const std::vector<std::string>& args)
 {
     keychord_init();
@@ -354,15 +477,42 @@ static void export_oem_lock_status() {
     }
 }
 
+static void symlink_fstab() {
+    char fstab_path[255] = "/fstab.";
+    char fstab_default_path[50] = "/fstab.";
+    int ret = -1;
+
+    //such as: fstab.rk30board.bootmode.unknown
+    strcat(fstab_path, hardware);
+    strcat(fstab_path, ".bootmode.");
+    strcat(fstab_path, bootmode);
+    strcat(fstab_default_path, hardware);
+    ret = symlink(fstab_path, fstab_default_path);
+    if (ret < 0) {
+        ERROR("%s : failed", __func__);
+    }
+}
+
 static void export_kernel_boot_props() {
+    char cmdline[1024];
+    char* s1;
+    char* s2;
+    char* s3;
+    char* s4;
+    char* s5;
+
     struct {
         const char *src_prop;
         const char *dst_prop;
         const char *default_value;
     } prop_map[] = {
-#ifndef IGNORE_RO_BOOT_SERIALNO
-        { "ro.boot.serialno",   "ro.serialno",   "", },
-#endif
+//<<<<<<< HEAD
+//#ifndef IGNORE_RO_BOOT_SERIALNO
+//        { "ro.boot.serialno",   "ro.serialno",   "", },
+//#endif
+//=======
+//        //{ "ro.boot.serialno",   "ro.serialno",   "", },
+//>>>>>>> rock/thzy_develop
         { "ro.boot.mode",       "ro.bootmode",   "unknown", },
         { "ro.boot.baseband",   "ro.baseband",   "unknown", },
         { "ro.boot.bootloader", "ro.bootloader", "unknown", },
@@ -371,10 +521,81 @@ static void export_kernel_boot_props() {
         { "ro.boot.revision",   "ro.revision",   "0", },
 #endif
     };
+	proc_read( "/proc/cmdline", cmdline, sizeof(cmdline) );
+        s1 = strstr(cmdline, STORAGE_MEDIA);
+	ERROR("SDMMC OR EMMC ?s1=%s\n",s1);
+    //if storagemedia is emmc, so we will wait emmc init finish
+if(s1 > 0) {
+    for (int i = 0; i < EMMC_RETRY_COUNT; i++) {
+        proc_read( "/proc/cmdline", cmdline, sizeof(cmdline) );
+        s1 = strstr(cmdline, STORAGE_MEDIA);
+        s2 = strstr(cmdline, "androidboot.mode=emmc");
+	s3 = strstr(cmdline, "storagemedia=nvme");
+	s4 = strstr(cmdline, "androidboot.mode=nvme");
+	s5 = strstr(cmdline, "sdfwupdate"); //check sdcard fw update
+	ERROR("s1=%s\n",s1);
+	ERROR("s2=%s\n",s2);
+	ERROR("s3=%s\n",s3);
+	ERROR("s4=%s\n",s4);
+	ERROR("s5=%s\n",s5);
+
+        if ((s1 == NULL) && (s3 == NULL) && (s5 == NULL)) {
+            //storagemedia is unknow
+            ERROR("storagemedia is unknow\n");
+            break;
+        }
+
+        if ((s1 > 0) && (s2 > 0)) {
+            ERROR("OK,EMMC DRIVERS INIT OK\n");
+            property_set("ro.boot.mode", "emmc");
+            break;
+        } else if ((s3 > 0) && (s4 > 0)) {
+	    ERROR("OK,NVME DRIVERS INIT OK\n");
+	    property_set("ro.boot.mode", "nvme");
+	    break;
+	} else if(s5 >0) {
+	    ERROR("OK,IS sdcard fw upgrade\n");
+	    property_set("ro.boot.mode", "emmc");
+	    break;
+	} else {
+            ERROR("OK,EMMC DRIVERS NOT READY, RERRY=%d\n", i);
+            usleep(10000);
+        }
+    }
+} else {
+    for (int i = 0; i < EMMC_RETRY_COUNT_SD; i++) {
+		proc_read( "/proc/cmdline", cmdline, sizeof(cmdline) );
+		s1 = strstr(cmdline, STORAGE_MEDIA_SD);
+		s2 = strstr(cmdline, "androidboot.mode=sd");
+
+		if ((s1 > 0) && (s2 > 0)) {
+			ERROR("OK,SDMMC DRIVERS INIT OK\n");
+			property_set("ro.boot.mode", "sd");
+			break;
+		} else {
+			ERROR("ERROR,SDMMC DRIVERS NOT READY, RERRY=%d\n", i);
+		}
+	}
+}
+
     for (size_t i = 0; i < ARRAY_SIZE(prop_map); i++) {
         std::string value = property_get(prop_map[i].src_prop);
         property_set(prop_map[i].dst_prop, (!value.empty()) ? value.c_str() : prop_map[i].default_value);
     }
+
+    /* save a copy for init's usage during boot */
+    std::string bootmode_value = property_get("ro.bootmode");
+    if (!bootmode_value.empty())
+        strlcpy(bootmode, bootmode_value.c_str(), sizeof(bootmode));
+
+    /* if this was given on kernel command line, override what we read
+     * before (e.g. from /proc/cpuinfo), if anything */
+    std::string hardware_value = property_get("ro.boot.hardware");
+    if (!hardware_value.empty())
+        strlcpy(hardware, hardware_value.c_str(), sizeof(hardware));
+    property_set("ro.hardware", hardware);
+
+    symlink_fstab();
 }
 
 static void process_kernel_dt() {
@@ -405,6 +626,35 @@ static void process_kernel_dt() {
 
         std::string property_name = android::base::StringPrintf("ro.boot.%s", dp->d_name);
         property_set(property_name.c_str(), dt_file.c_str());
+    }
+}
+
+static void set_soc_if_need() {
+    std::string soc_value = property_get("ro.rk.soc");
+    if (soc_value.empty()){
+	char *s1,*s2;
+	char cpuinfo[4096];
+	char soc[20];
+	int cpuinfo_len = 0;
+	proc_read( "/proc/cpuinfo", cpuinfo, sizeof(cpuinfo) );
+        cpuinfo_len = strlen(cpuinfo);	
+	for(int i=0;i<cpuinfo_len;i++){//all to lowercase
+		cpuinfo[i] = tolower(cpuinfo[i]);
+	}
+	s1 = strstr(cpuinfo, "rockchip");
+	if(s1 == NULL)
+		return;
+	s2 = strstr(s1, "revision");
+	if((strlen(s1)>15)&& s2!=NULL){
+		int soc_len = strlen(s1) - strlen(s2) - 9 -1;
+		strncpy(soc,s1+9,soc_len);
+		soc[soc_len]='\0';
+		ERROR("-----set_soc_if_need,get soc=%s,len = %d\n",soc,soc_len);
+		if(strncmp(soc,"rk",2)==0){
+			ERROR("---ready to set ro.rk.soc to %s\n",soc);	
+			property_set("ro.rk.soc",soc);
+		}
+	}
     }
 }
 
@@ -440,7 +690,7 @@ static void selinux_init_all_handles(void)
     sehandle_prop = selinux_android_prop_context_handle();
 }
 
-enum selinux_enforcing_status { SELINUX_PERMISSIVE, SELINUX_ENFORCING };
+enum selinux_enforcing_status { SELINUX_DISABLED, SELINUX_PERMISSIVE, SELINUX_ENFORCING };
 
 static selinux_enforcing_status selinux_status_from_cmdline() {
     selinux_enforcing_status status = SELINUX_ENFORCING;
@@ -449,14 +699,32 @@ static selinux_enforcing_status selinux_status_from_cmdline() {
         if (key == "androidboot.selinux" && value == "permissive") {
             status = SELINUX_PERMISSIVE;
         }
+        if (key == "androidboot.selinux" && value == "disabled") {
+            status = SELINUX_DISABLED;
+        }
     });
 
     return status;
 }
 
+
+static bool selinux_is_disabled(void)
+{
+    if (ALLOW_DISABLE_SELINUX) {
+        if (access("/sys/fs/selinux", F_OK) != 0) {
+            // SELinux is not compiled into the kernel, or has been disabled
+            // via the kernel command line "selinux=0".
+            return true;
+        }
+        return selinux_status_from_cmdline() == SELINUX_DISABLED;
+    }
+
+    return false;
+}
+
 static bool selinux_is_enforcing(void)
 {
-    if (ALLOW_PERMISSIVE_SELINUX) {
+    if (ALLOW_DISABLE_SELINUX) {
         return selinux_status_from_cmdline() == SELINUX_ENFORCING;
     }
     return true;
@@ -464,6 +732,10 @@ static bool selinux_is_enforcing(void)
 
 int selinux_reload_policy(void)
 {
+    if (selinux_is_disabled()) {
+        return -1;
+    }
+
     INFO("SELinux: Attempting to reload policy files\n");
 
     if (selinux_android_reload_policy() == -1) {
@@ -509,6 +781,10 @@ static void selinux_initialize(bool in_kernel_domain) {
     cb.func_audit = audit_callback;
     selinux_set_callback(SELINUX_CB_AUDIT, cb);
 
+    if (selinux_is_disabled()) {
+        return;
+    }
+
     if (in_kernel_domain) {
         INFO("Loading SELinux policy...\n");
         if (selinux_android_load_policy() < 0) {
@@ -516,15 +792,8 @@ static void selinux_initialize(bool in_kernel_domain) {
             security_failure();
         }
 
-        bool kernel_enforcing = (security_getenforce() == 1);
         bool is_enforcing = selinux_is_enforcing();
-        if (kernel_enforcing != is_enforcing) {
-            if (security_setenforce(is_enforcing)) {
-                ERROR("security_setenforce(%s) failed: %s\n",
-                      is_enforcing ? "true" : "false", strerror(errno));
-                security_failure();
-            }
-        }
+        security_setenforce(is_enforcing);
 
         if (write_file("/sys/fs/selinux/checkreqprot", "0") == -1) {
             security_failure();
@@ -609,6 +878,8 @@ int main(int argc, char** argv) {
         // Propagate the kernel variables to internal variables
         // used by init as well as the current required properties.
         export_kernel_boot_props();
+	//add by xzj to set ro.rk.soc read from /proc/cpuinfo if not set
+	set_soc_if_need();
     }
 
     // Set up SELinux, including loading the SELinux policy if we're in the kernel domain.

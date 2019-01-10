@@ -133,6 +133,17 @@ bool Service::Reap() {
                 ERROR("critical process '%s' exited %d times in %d minutes; "
                       "rebooting into recovery mode\n", name_.c_str(),
                       CRITICAL_CRASH_THRESHOLD, CRITICAL_CRASH_WINDOW / 60);
+#if defined(TARGET_BOARD_PLATFORM_PRODUCT_BOX)
+                FILE *fd = fopen("/cache/recovery/command", "wb+");
+                if(NULL == fd){
+                    NOTICE("*******/cache/recovery/command can't open*******\n");
+                }
+                char buffer[100] = "--wipe_data\n";
+                fwrite(buffer, 1, strlen("--wipe_data"), fd);
+                fclose(fd);
+                fd = NULL;
+                sync()
+#endif
                 android_reboot(ANDROID_RB_RESTART2, 0, "recovery");
                 return false;
             }
@@ -344,44 +355,46 @@ bool Service::Start() {
     }
 
     std::string scon;
-    if (!seclabel_.empty()) {
-        scon = seclabel_;
-    } else {
-        char* mycon = nullptr;
-        char* fcon = nullptr;
+    if (is_selinux_enabled() > 0) {
+        if (!seclabel_.empty()) {
+            scon = seclabel_;
+        } else {
+            char* mycon = nullptr;
+            char* fcon = nullptr;
 
-        INFO("computing context for service '%s'\n", args_[0].c_str());
-        int rc = getcon(&mycon);
-        if (rc < 0) {
-            ERROR("could not get context while starting '%s'\n", name_.c_str());
-            return false;
-        }
+            INFO("computing context for service '%s'\n", args_[0].c_str());
+            int rc = getcon(&mycon);
+            if (rc < 0) {
+                ERROR("could not get context while starting '%s'\n", name_.c_str());
+                return false;
+            }
 
-        rc = getfilecon(args_[0].c_str(), &fcon);
-        if (rc < 0) {
-            ERROR("could not get context while starting '%s'\n", name_.c_str());
-            free(mycon);
-            return false;
-        }
+            rc = getfilecon(args_[0].c_str(), &fcon);
+            if (rc < 0) {
+                ERROR("could not get context while starting '%s'\n", name_.c_str());
+                free(mycon);
+                return false;
+            }
 
-        char* ret_scon = nullptr;
-        rc = security_compute_create(mycon, fcon, string_to_security_class("process"),
-                                     &ret_scon);
-        if (rc == 0) {
-            scon = ret_scon;
-            free(ret_scon);
-        }
-        if (rc == 0 && scon == mycon) {
-            ERROR("Service %s does not have a SELinux domain defined.\n", name_.c_str());
+            char* ret_scon = nullptr;
+            rc = security_compute_create(mycon, fcon, string_to_security_class("process"),
+                                         &ret_scon);
+            if (rc == 0) {
+                scon = ret_scon;
+                free(ret_scon);
+            }
+            if (rc == 0 && scon == mycon) {
+                ERROR("Service %s does not have a SELinux domain defined.\n", name_.c_str());
+                free(mycon);
+                free(fcon);
+                return false;
+            }
             free(mycon);
             free(fcon);
-            return false;
-        }
-        free(mycon);
-        free(fcon);
-        if (rc < 0) {
-            ERROR("could not get context while starting '%s'\n", name_.c_str());
-            return false;
+            if (rc < 0) {
+                ERROR("could not get context while starting '%s'\n", name_.c_str());
+                return false;
+            }
         }
     }
 
@@ -453,7 +466,7 @@ bool Service::Start() {
             }
         }
         if (!seclabel_.empty()) {
-            if (setexeccon(seclabel_.c_str()) < 0) {
+            if (is_selinux_enabled() > 0 && setexeccon(seclabel_.c_str()) < 0) {
                 ERROR("cannot setexeccon('%s'): %s\n",
                       seclabel_.c_str(), strerror(errno));
                 _exit(127);

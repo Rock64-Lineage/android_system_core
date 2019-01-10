@@ -5,9 +5,9 @@ LOCAL_PATH:= $(call my-dir)
 # --
 
 ifneq (,$(filter userdebug eng,$(TARGET_BUILD_VARIANT)))
-init_options += -DALLOW_LOCAL_PROP_OVERRIDE=1 -DALLOW_PERMISSIVE_SELINUX=1
+init_options += -DALLOW_LOCAL_PROP_OVERRIDE=1 -DALLOW_DISABLE_SELINUX=1
 else
-init_options += -DALLOW_LOCAL_PROP_OVERRIDE=0 -DALLOW_PERMISSIVE_SELINUX=0
+init_options += -DALLOW_LOCAL_PROP_OVERRIDE=0 -DALLOW_DISABLE_SELINUX=0
 endif
 
 init_options += -DLOG_UEVENTS=0
@@ -25,6 +25,10 @@ init_cflags += \
     -Wall -Wextra \
     -Wno-unused-parameter \
     -Werror \
+
+ifeq ($(strip $(TARGET_BOARD_PLATFORM_PRODUCT)), box)
+    LOCAL_CFLAGS += -DTARGET_BOARD_PLATFORM_PRODUCT_BOX
+endif
 
 # --
 

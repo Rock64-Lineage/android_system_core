@@ -10,10 +10,6 @@ import /init.${ro.hardware}.rc
 import /init.usb.configfs.rc
 import /init.${ro.zygote}.rc
 
-# Include CM's extra init file
-import /init.cm.rc
-
-
 on early-init
     # Set init and its forked children's oom_adj.
     write /proc/1/oom_score_adj -1000
@@ -55,22 +51,18 @@ on init
     mount cgroup none /dev/stune schedtune
     mkdir /dev/stune/foreground
     mkdir /dev/stune/background
-    mkdir /dev/stune/system-background
     mkdir /dev/stune/top-app
     chown system system /dev/stune
     chown system system /dev/stune/foreground
     chown system system /dev/stune/background
-    chown system system /dev/stune/system-background
     chown system system /dev/stune/top-app
     chown system system /dev/stune/tasks
     chown system system /dev/stune/foreground/tasks
     chown system system /dev/stune/background/tasks
-    chown system system /dev/stune/system-background/tasks
     chown system system /dev/stune/top-app/tasks
     chmod 0664 /dev/stune/tasks
     chmod 0664 /dev/stune/foreground/tasks
     chmod 0664 /dev/stune/background/tasks
-    chmod 0664 /dev/stune/system-background/tasks
     chmod 0664 /dev/stune/top-app/tasks
 
     # Mount staging areas for devices managed by vold
@@ -144,9 +136,6 @@ on init
     write /proc/sys/net/ipv4/conf/all/accept_redirects 0
     write /proc/sys/net/ipv6/conf/all/accept_redirects 0
 
-    # /proc/net/fib_trie leaks interface IP addresses
-    chmod 0400 /proc/net/fib_trie
-
     # Create cgroup mount points for process groups
     mkdir /dev/cpuctl
     mount cgroup none /dev/cpuctl cpu
@@ -155,6 +144,15 @@ on init
     chmod 0666 /dev/cpuctl/tasks
     write /dev/cpuctl/cpu.rt_period_us 1000000
     write /dev/cpuctl/cpu.rt_runtime_us 950000
+
+    mkdir /dev/cpuctl/bg_non_interactive
+    chown system system /dev/cpuctl/bg_non_interactive/tasks
+    chmod 0666 /dev/cpuctl/bg_non_interactive/tasks
+    # 5.0 %
+    write /dev/cpuctl/bg_non_interactive/cpu.shares 52
+    write /dev/cpuctl/bg_non_interactive/cpu.rt_period_us 1000000
+    # active FIFO threads will never be in BG
+    write /dev/cpuctl/bg_non_interactive/cpu.rt_runtime_us 10000
 
     # sets up initial cpusets for ActivityManager
     mkdir /dev/cpuset
@@ -226,8 +224,6 @@ on init
     mount pstore pstore /sys/fs/pstore
     chown system log /sys/fs/pstore/console-ramoops
     chmod 0440 /sys/fs/pstore/console-ramoops
-    chown system log /sys/fs/pstore/console-ramoops-0
-    chmod 0440 /sys/fs/pstore/console-ramoops-0
     chown system log /sys/fs/pstore/pmsg-ramoops-0
     chmod 0440 /sys/fs/pstore/pmsg-ramoops-0
 
@@ -238,7 +234,7 @@ on init
     # expecting it to point to /proc/self/fd
     symlink /proc/self/fd /dev/fd
 
-    export DOWNLOAD_CACHE ${ro.device.cache_dir}
+    export DOWNLOAD_CACHE /data/cache
 
     # set RLIMIT_NICE to allow priorities from 19 to -20
     setrlimit 13 40 40
@@ -248,6 +244,10 @@ on init
 on property:sys.boot_from_charger_mode=1
     class_stop charger
     trigger late-init
+
+# Load properties from /system/ + /factory after fs mount.
+on load_system_props_action
+    load_system_props
 
 on load_persist_props_action
     load_persist_props
@@ -267,6 +267,11 @@ on late-init
     # /system and /vendor must be mounted by the end of the fs stage,
     # while /data is optional.
     trigger fs
+
+    # Load properties from /system/ + /factory after fs mount. Place
+    # this in another action so that the load will be scheduled after the prior
+    # issued fs triggers have completed.
+    trigger load_system_props_action
     trigger post-fs
 
     # Mount fstab in init.{$device}.rc by mount_all with '--late' parameter
@@ -291,16 +296,10 @@ on late-init
 
 
 on post-fs
-    # Load properties from
-    #     /system/build.prop,
-    #     /odm/build.prop,
-    #     /vendor/build.prop and
-    #     /factory/factory.prop
-    load_system_props
-    # start essential services
-    start logd
+    # start logd
     # set RLIMIT_NICE to allow priorities from 19 to -20
-    # setrlimit 13 40 40
+    setrlimit 13 40 40
+    class_start core
     # once everything is setup, no need to modify /
     mount rootfs rootfs / ro remount
     # Mount shared so changes propagate into child namespaces
@@ -375,8 +374,7 @@ on post-fs-data
     # Fix the access permissions and group ownership for 'bt_config.conf'
     chmod 0660 /data/misc/bluedroid/bt_config.conf
     chown bluetooth net_bt_stack /data/misc/bluedroid/bt_config.conf
-    mkdir /data/misc/bluetooth 0770 bluetooth net_bt_stack
-    mkdir /data/misc/bluetooth/logs 0770 bluetooth net_bt_stack
+    mkdir /data/misc/bluetooth 0770 system system
     mkdir /data/misc/keystore 0700 keystore keystore
     mkdir /data/misc/gatekeeper 0700 system system
     mkdir /data/misc/keychain 0771 system system
@@ -449,6 +447,10 @@ on post-fs-data
 
     mkdir /data/anr 0775 system system
 
+    # symlink to bugreport storage location
+    rm /data/bugreports
+    symlink /data/user_de/0/com.android.shell/files/bugreports /data/bugreports
+
     # Separate location for storing security policy files on data
     mkdir /data/security 0711 system system
 
@@ -486,9 +488,6 @@ on post-fs-data
 
     # Set SELinux security contexts on upgrade or policy update.
     restorecon_recursive /data
-    restorecon /data/data
-    restorecon /data/user
-    restorecon /data/user/0
 
     # Check any timezone data in /data is newer than the copy in /system, delete if not.
     exec - system system -- /system/bin/tzdatacheck /system/usr/share/zoneinfo /data/misc/zoneinfo
@@ -568,11 +567,8 @@ on boot
     chown system system /sys/class/leds/button-backlight/brightness
     chown system system /sys/class/leds/jogball-backlight/brightness
     chown system system /sys/class/leds/red/brightness
-    chown system system /sys/class/leds/red/blink
     chown system system /sys/class/leds/green/brightness
-    chown system system /sys/class/leds/green/blink
     chown system system /sys/class/leds/blue/brightness
-    chown system system /sys/class/leds/blue/blink
     chown system system /sys/class/leds/red/device/grpfreq
     chown system system /sys/class/leds/red/device/grppwm
     chown system system /sys/class/leds/red/device/blink
@@ -588,8 +584,6 @@ on boot
 
     # Define default initial receive window size in segments.
     setprop net.tcp.default_init_rwnd 60
-
-    class_start core
 
 on nonencrypted
     # A/B update verifier that marks a successful boot.
@@ -686,9 +680,3 @@ on property:ro.debuggable=1
 service flash_recovery /system/bin/install-recovery.sh
     class main
     oneshot
-    disabled
-
-# update recovery if enabled
-#on property:persist.sys.recovery_update=true
-#    start flash_recovery
-

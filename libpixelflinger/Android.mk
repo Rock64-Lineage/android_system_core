@@ -6,6 +6,10 @@ include $(CLEAR_VARS)
 #
 
 include $(CLEAR_VARS)
+LOCAL_C_INCLUDES += $(LOCAL_EXPORT_C_INCLUDE_DIRS) \
+                    $(LOCAL_PATH)/include \
+		    external/safe-iop/include
+
 PIXELFLINGER_SRC_FILES:= \
 	codeflinger/CodeCache.cpp \
 	format.cpp \
@@ -90,6 +94,7 @@ LOCAL_SRC_FILES_mips64 := $(PIXELFLINGER_SRC_FILES_mips64)
 LOCAL_CFLAGS := $(PIXELFLINGER_CFLAGS)
 LOCAL_EXPORT_C_INCLUDE_DIRS := $(LOCAL_PATH)/include
 LOCAL_C_INCLUDES += $(LOCAL_EXPORT_C_INCLUDE_DIRS) \
+                    $(LOCAL_PATH)/include \
 		    external/safe-iop/include
 LOCAL_SHARED_LIBRARIES := libcutils liblog libutils
 LOCAL_WHOLE_STATIC_LIBRARIES_x86 := libenc
@@ -100,5 +105,26 @@ LOCAL_WHOLE_STATIC_LIBRARIES_x86_64 := libenc
 LOCAL_SHARED_LIBRARIES += libhardware_legacy
 LOCAL_CFLAGS += -DWITH_LIB_HARDWARE
 include $(BUILD_SHARED_LIBRARY)
+
+#
+# Static library version
+#
+
+include $(CLEAR_VARS)
+LOCAL_MODULE:= libpixelflinger_static
+LOCAL_SRC_FILES := $(PIXELFLINGER_SRC_FILES)
+LOCAL_SRC_FILES_arm := $(PIXELFLINGER_SRC_FILES_arm)
+LOCAL_SRC_FILES_arm64 := $(PIXELFLINGER_SRC_FILES_arm64)
+LOCAL_SRC_FILES_mips := $(PIXELFLINGER_SRC_FILES_mips)
+LOCAL_CFLAGS := $(PIXELFLINGER_CFLAGS)
+# t32cb16blend.S does not compile with Clang.
+LOCAL_CLANG_ASFLAGS_arm += -no-integrated-as
+# arch-arm64/col32cb16blend.S does not compile with Clang.
+LOCAL_CLANG_ASFLAGS_arm64 += -no-integrated-as
+LOCAL_C_INCLUDES += $(LOCAL_EXPORT_C_INCLUDE_DIRS) \
+                    $(LOCAL_PATH)/include \
+		    external/safe-iop/include
+include $(BUILD_STATIC_LIBRARY)
+
 
 include $(call all-makefiles-under,$(LOCAL_PATH))
